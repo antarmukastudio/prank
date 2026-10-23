@@ -79,6 +79,7 @@ jobs:
           cat > app/src/main/AndroidManifest.xml <<'EOF'
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
               <application
                   android:label="@string/app_name"
                   android:icon="@mipmap/ic_launcher"
@@ -94,6 +95,7 @@ jobs:
                           <category android:name="android.intent.category.LAUNCHER" />
                       </intent-filter>
                   </activity>
+                  <service android:name=".OverlayService" android:exported="false" />
               </application>
           </manifest>
           EOF
@@ -142,34 +144,76 @@ jobs:
           package com.prank.lag;
 
           import android.app.Activity;
-          import android.graphics.Color;
+          import android.content.Intent;
+          import android.net.Uri;
           import android.os.Bundle;
-          import android.os.Handler;
-          import android.os.Looper;
-          import android.os.SystemClock;
-          import android.view.MotionEvent;
-          import android.widget.FrameLayout;
+          import android.provider.Settings;
           import android.widget.Toast;
 
           public class MainActivity extends Activity {
-              // Ubah angka ini buat durasi prank (milidetik). 25000 = 25 detik.
-              private static final long DURATION_MS = 25000;
-
-              private final Handler handler = new Handler(Looper.getMainLooper());
-              private final Runnable autoEnd = this::endPrank;
-              private int taps = 0;
-              private long lastTap = 0;
-              private boolean ended = false;
-
               @Override
               protected void onCreate(Bundle savedInstanceState) {
                   super.onCreate(savedInstanceState);
-                  FrameLayout root = new FrameLayout(this);
-                  root.setBackgroundColor(Color.TRANSPARENT);
-                  root.setClickable(true);
-                  root.setOnTouchListener((v, e) -> {
+                  if (!Settings.canDrawOverlays(this)) {
+                      Toast.makeText(this, "Izinkan 'Tampil di atas aplikasi lain', lalu buka app ini lagi", Toast.LENGTH_LONG).show();
+                      Intent i = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:" + getPackageName()));
+                      startActivity(i);
+                  } else {
+                      startService(new Intent(this, OverlayService.class));
+                  }
+                  finish();
+              }
+          }
+          EOF
+
+          cat > app/src/main/java/com/prank/lag/OverlayService.java <<'EOF'
+          package com.prank.lag;
+
+          import android.app.Service;
+          import android.content.Intent;
+          import android.graphics.Color;
+          import android.graphics.PixelFormat;
+          import android.os.Handler;
+          import android.os.IBinder;
+          import android.os.Looper;
+          import android.os.SystemClock;
+          import android.view.Gravity;
+          import android.view.MotionEvent;
+          import android.view.WindowManager;
+          import android.widget.FrameLayout;
+          import android.widget.Toast;
+
+          public class OverlayService extends Service {
+              // Jeda sebelum layar beku muncul (ms). Buat buka WhatsApp dulu. 8000 = 8 detik.
+              private static final long DELAY_MS = 8000;
+              // Lama layar beku (ms). 25000 = 25 detik.
+              private static final long DURATION_MS = 25000;
+
+              private final Handler handler = new Handler(Looper.getMainLooper());
+              private WindowManager wm;
+              private FrameLayout overlay;
+              private int taps = 0;
+              private long lastTap = 0;
+
+              @Override
+              public IBinder onBind(Intent intent) { return null; }
+
+              @Override
+              public int onStartCommand(Intent intent, int flags, int startId) {
+                  wm = (WindowManager) getSystemService(WINDOW_SERVICE);
+                  handler.removeCallbacksAndMessages(null);
+                  handler.postDelayed(this::showOverlay, DELAY_MS);
+                  return START_NOT_STICKY;
+              }
+
+              private void showOverlay() {
+                  if (overlay != null) return;
+                  overlay = new FrameLayout(this);
+                  overlay.setBackgroundColor(Color.TRANSPARENT);
+                  overlay.setClickable(true);
+                  overlay.setOnTouchListener((v, e) -> {
                       if (e.getAction() == MotionEvent.ACTION_DOWN) {
-                          boolean corner = e.getX() > v.getWidth() * 0.8f && e.getY() < v.getWidth() * 0.2f;
+                          boolean corner = e.getRawX() > v.getWidth() * 0.8f && e.getRawY() < v.getWidth() * 0.2f;
                           if (corner) {
                               long now = SystemClock.uptimeMillis();
                               taps = (now - lastTap < 2000) ? taps + 1 : 1;
@@ -181,37 +225,39 @@ jobs:
                       }
                       return true;
                   });
-                  setContentView(root);
-                  handler.postDelayed(autoEnd, DURATION_MS);
-              }
-
-              @Override
-              public void onBackPressed() {
-                  // sengaja kosong biar tombol back ga nutup
-              }
-
-              @Override
-              protected void onStop() {
-                  super.onStop();
-                  // Kalau user pencet Home/pindah app, tutup tanpa ninggalin overlay.
-                  if (!ended) {
-                      ended = true;
-                      handler.removeCallbacks(autoEnd);
-                      finishAndRemoveTask();
+                  WindowManager.LayoutParams lp = new WindowManager.LayoutParams(
+                          WindowManager.LayoutParams.MATCH_PARENT,
+                          WindowManager.LayoutParams.MATCH_PARENT,
+                          WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                          WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                                  | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                          PixelFormat.TRANSLUCENT);
+                  lp.gravity = Gravity.TOP | Gravity.START;
+                  try {
+                      wm.addView(overlay, lp);
+                      handler.postDelayed(this::endPrank, DURATION_MS);
+                  } catch (Exception ex) {
+                      stopSelf();
                   }
               }
 
               private void endPrank() {
-                  if (ended) return;
-                  ended = true;
-                  handler.removeCallbacks(autoEnd);
+                  handler.removeCallbacksAndMessages(null);
+                  if (overlay != null) {
+                      try { wm.removeView(overlay); } catch (Exception ignored) {}
+                      overlay = null;
+                  }
                   Toast.makeText(getApplicationContext(), "KENA PRANK \uD83D\uDE02", Toast.LENGTH_LONG).show();
-                  finishAndRemoveTask();
+                  stopSelf();
               }
 
               @Override
-              protected void onDestroy() {
-                  handler.removeCallbacks(autoEnd);
+              public void onDestroy() {
+                  handler.removeCallbacksAndMessages(null);
+                  if (overlay != null) {
+                      try { wm.removeView(overlay); } catch (Exception ignored) {}
+                      overlay = null;
+                  }
                   super.onDestroy();
               }
           }
