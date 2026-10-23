@@ -1,0 +1,230 @@
+name: Build Prank APK
+
+on:
+  workflow_dispatch:
+  push:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.7"
+
+      - name: Generate Android project
+        run: |
+          mkdir -p app/src/main/java/com/prank/lag app/src/main/res/values app/src/main/res/drawable app/src/main/res/mipmap-anydpi-v26
+
+          cat > settings.gradle <<'EOF'
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+          dependencyResolutionManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+          rootProject.name = "PrankLag"
+          include ':app'
+          EOF
+
+          cat > build.gradle <<'EOF'
+          plugins {
+              id 'com.android.application' version '8.5.2' apply false
+          }
+          EOF
+
+          cat > gradle.properties <<'EOF'
+          org.gradle.jvmargs=-Xmx2g
+          android.useAndroidX=false
+          EOF
+
+          cat > app/build.gradle <<'EOF'
+          plugins {
+              id 'com.android.application'
+          }
+          android {
+              namespace 'com.prank.lag'
+              compileSdk 34
+              defaultConfig {
+                  applicationId 'com.prank.lag'
+                  minSdk 26
+                  targetSdk 34
+                  versionCode 1
+                  versionName '1.0'
+              }
+              compileOptions {
+                  sourceCompatibility JavaVersion.VERSION_17
+                  targetCompatibility JavaVersion.VERSION_17
+              }
+          }
+          EOF
+
+          cat > app/src/main/AndroidManifest.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <application
+                  android:label="@string/app_name"
+                  android:icon="@mipmap/ic_launcher"
+                  android:allowBackup="false">
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true"
+                      android:theme="@style/PrankTheme"
+                      android:excludeFromRecents="true"
+                      android:launchMode="singleTask">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+              </application>
+          </manifest>
+          EOF
+
+          cat > app/src/main/res/values/strings.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <string name="app_name">Lag</string>
+          </resources>
+          EOF
+
+          cat > app/src/main/res/values/themes.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <style name="PrankTheme" parent="@android:style/Theme.Translucent.NoTitleBar">
+                  <item name="android:windowIsTranslucent">true</item>
+                  <item name="android:windowBackground">@android:color/transparent</item>
+                  <item name="android:windowAnimationStyle">@null</item>
+                  <item name="android:windowShowWallpaper">false</item>
+              </style>
+          </resources>
+          EOF
+
+          cat > app/src/main/res/drawable/ic_fg.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="108dp"
+              android:height="108dp"
+              android:viewportWidth="108"
+              android:viewportHeight="108">
+              <path
+                  android:fillColor="#08000000"
+                  android:pathData="M54,54m-22,0a22,22 0,1 1,44 0a22,22 0,1 1,-44 0" />
+          </vector>
+          EOF
+
+          cat > app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+              <background android:drawable="@android:color/transparent" />
+              <foreground android:drawable="@drawable/ic_fg" />
+          </adaptive-icon>
+          EOF
+
+          cat > app/src/main/java/com/prank/lag/MainActivity.java <<'EOF'
+          package com.prank.lag;
+
+          import android.app.Activity;
+          import android.graphics.Color;
+          import android.os.Bundle;
+          import android.os.Handler;
+          import android.os.Looper;
+          import android.os.SystemClock;
+          import android.view.MotionEvent;
+          import android.widget.FrameLayout;
+          import android.widget.Toast;
+
+          public class MainActivity extends Activity {
+              // Ubah angka ini buat durasi prank (milidetik). 25000 = 25 detik.
+              private static final long DURATION_MS = 25000;
+
+              private final Handler handler = new Handler(Looper.getMainLooper());
+              private final Runnable autoEnd = this::endPrank;
+              private int taps = 0;
+              private long lastTap = 0;
+              private boolean ended = false;
+
+              @Override
+              protected void onCreate(Bundle savedInstanceState) {
+                  super.onCreate(savedInstanceState);
+                  FrameLayout root = new FrameLayout(this);
+                  root.setBackgroundColor(Color.TRANSPARENT);
+                  root.setClickable(true);
+                  root.setOnTouchListener((v, e) -> {
+                      if (e.getAction() == MotionEvent.ACTION_DOWN) {
+                          boolean corner = e.getX() > v.getWidth() * 0.8f && e.getY() < v.getWidth() * 0.2f;
+                          if (corner) {
+                              long now = SystemClock.uptimeMillis();
+                              taps = (now - lastTap < 2000) ? taps + 1 : 1;
+                              lastTap = now;
+                              if (taps >= 5) endPrank();
+                          } else {
+                              taps = 0;
+                          }
+                      }
+                      return true;
+                  });
+                  setContentView(root);
+                  handler.postDelayed(autoEnd, DURATION_MS);
+              }
+
+              @Override
+              public void onBackPressed() {
+                  // sengaja kosong biar tombol back ga nutup
+              }
+
+              @Override
+              protected void onStop() {
+                  super.onStop();
+                  // Kalau user pencet Home/pindah app, tutup tanpa ninggalin overlay.
+                  if (!ended) {
+                      ended = true;
+                      handler.removeCallbacks(autoEnd);
+                      finishAndRemoveTask();
+                  }
+              }
+
+              private void endPrank() {
+                  if (ended) return;
+                  ended = true;
+                  handler.removeCallbacks(autoEnd);
+                  Toast.makeText(getApplicationContext(), "KENA PRANK \uD83D\uDE02", Toast.LENGTH_LONG).show();
+                  finishAndRemoveTask();
+              }
+
+              @Override
+              protected void onDestroy() {
+                  handler.removeCallbacks(autoEnd);
+                  super.onDestroy();
+              }
+          }
+          EOF
+
+      - name: Build APK
+        run: gradle assembleDebug --no-daemon
+
+      - name: Rename APK
+        run: cp app/build/outputs/apk/debug/app-debug.apk prank-lag.apk
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ github.run_number }}
+          name: Prank Lag v${{ github.run_number }}
+          files: prank-lag.apk
